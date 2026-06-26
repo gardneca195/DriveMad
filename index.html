@@ -30,8 +30,8 @@
        background:#ffd23f;color:#23160a;box-shadow:0 6px 0 #b8860b;transition:transform .06s,box-shadow .06s;}
   .btn:active{transform:translateY(4px);box-shadow:0 2px 0 #b8860b;}
   .btn.alt{background:#23273f;color:#fff;box-shadow:0 6px 0 #11131f;}
-  .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;max-height:38vh;overflow-y:auto;padding:6px;max-width:min(92vw,440px);}
-  .lvl{width:52px;height:52px;border-radius:12px;background:#23273f;color:#fff;border:2px solid rgba(255,255,255,.12);
+  .grid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;max-height:40vh;overflow-y:auto;padding:6px;max-width:min(95vw,480px);}
+  .lvl{width:46px;height:46px;border-radius:10px;background:#23273f;color:#fff;border:2px solid rgba(255,255,255,.12);
        font-size:18px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;}
   .lvl.done{background:#4ade80;color:#0a2a14;} .lvl.locked{opacity:.4;cursor:not-allowed;}
   .hide{display:none!important;}
@@ -42,7 +42,7 @@
 <body>
 <canvas id="c"></canvas>
 <div class="hud">
-  <div><div class="badge">Level <b id="hLevel">1</b></div><div class="badge">Time <b id="hTime">0.0</b>s</div></div>
+  <div><div class="badge">Level <b id="hLevel">1</b></div><div class="badge" id="hSurf">Grass</div><div class="badge">Time <b id="hTime">0.0</b>s</div></div>
   <div style="text-align:right"><div class="badge">Tries <b id="hTries">0</b></div></div>
 </div>
 <div class="topbar">
@@ -81,94 +81,180 @@ addEventListener('resize',resize);resize();
 
 function clamp(v,a,b){return v<a?a:v>b?b:v;}
 function lerp(a,b,t){return a+(b-a)*t;}
+function lighten(hex,amt){
+  var n=parseInt(hex.replace('#',''),16);
+  var r=clamp(((n>>16)&0xFF)+amt,0,255);
+  var g=clamp(((n>>8)&0xFF)+amt,0,255);
+  var b=clamp((n&0xFF)+amt,0,255);
+  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+}
 
 /* ── level generation ─────────────────────────────────────────────────────
    Each level is a polyline of [x,y] terrain points (y down, base ≈ 420).
-   Features unlock as levels progress:
-     hill     – gentle rolling hump
-     ramp     – steep climb to a flat top, slope back down
-     valley   – dip that slows you; bad ones need momentum to exit
-     plateau  – elevated flat section you drive up onto
-     gap      – launch ramp → vertical cliff → pit → far side
-                (car must jump; fall-in triggers crash at y > 820)
+   50 levels ordered by difficulty. Terrain types affect visuals & friction:
+     grass     – green, normal grip
+     mud       – brown, low grip / high rolling resistance
+     blacktop  – dark grey, best grip
+     concrete  – light grey, good grip
+     snow      – white/blue, slippery
 ──────────────────────────────────────────────────────────────────────────*/
 var BASE_Y=420;
 var LEVELS=[];
+
+/* terrain surface themes: [fillColor, strokeColor, skyColor, frictionMult, name] */
+var SURFACES={
+  grass:    {fill:'#5a8f3a',stroke:'#3f6b27',sky:'#87ceeb',fr:1.0,  name:'Grass'},
+  mud:      {fill:'#6b4423',stroke:'#4a2e12',sky:'#a09080',fr:0.72, name:'Mud'},
+  blacktop: {fill:'#3a3a3a',stroke:'#222',   sky:'#6ca6d9',fr:1.12, name:'Blacktop'},
+  concrete: {fill:'#9a9a8a',stroke:'#787868',sky:'#88bbdd',fr:1.05, name:'Concrete'},
+  snow:     {fill:'#e8eef5',stroke:'#b8c8d8',sky:'#c0d8ee',fr:0.65, name:'Snow'}
+};
+
 (function(){
   var rnd=function(seed){return function(){seed=(seed*9301+49297)%233280;return seed/233280;};};
-  for(var L=0;L<20;L++){
+
+  /* difficulty tiers: each level is hand-ordered by complexity */
+  var RECIPES=[];
+  function R(feats,surf,nf){RECIPES.push({feats:feats,surface:surf,numF:nf});}
+
+  /* ── Tier 1: Introduction (1-5) — grass, gentle ── */
+  R(['hill'],                        'grass',3);
+  R(['hill','hill'],                 'grass',3);
+  R(['hill','hill'],                 'grass',4);
+  R(['hill','ramp'],                 'grass',3);
+  R(['hill','ramp'],                 'grass',4);
+
+  /* ── Tier 2: Ramps & valleys (6-10) — grass/blacktop ── */
+  R(['hill','ramp','valley'],        'blacktop',4);
+  R(['ramp','valley'],               'grass',4);
+  R(['hill','ramp','valley'],        'grass',5);
+  R(['ramp','valley','hill'],        'blacktop',5);
+  R(['hill','valley','ramp'],        'grass',5);
+
+  /* ── Tier 3: First gaps & plateaus (11-15) — mix surfaces ── */
+  R(['hill','ramp','gap'],           'grass',4);
+  R(['hill','plateau','valley'],     'concrete',5);
+  R(['ramp','gap','hill'],           'blacktop',4);
+  R(['plateau','valley','ramp'],     'grass',5);
+  R(['hill','gap','valley'],         'concrete',5);
+
+  /* ── Tier 4: Mud & combos (16-20) ── */
+  R(['hill','valley','ramp'],        'mud',5);
+  R(['ramp','gap','plateau'],        'grass',5);
+  R(['valley','hill','ramp','gap'],  'mud',5);
+  R(['plateau','gap','valley'],      'blacktop',5);
+  R(['hill','ramp','valley','gap'],  'concrete',6);
+
+  /* ── Tier 5: Snow & harder gaps (21-25) ── */
+  R(['hill','valley'],               'snow',5);
+  R(['ramp','valley','hill'],        'snow',5);
+  R(['gap','ramp','plateau'],        'concrete',6);
+  R(['hill','valley','gap','ramp'],  'snow',5);
+  R(['plateau','gap','valley','ramp'],'mud',6);
+
+  /* ── Tier 6: Combinations ramp up (26-30) ── */
+  R(['valley','gap','plateau','hill'],'blacktop',6);
+  R(['gap','valley','ramp','hill'],  'mud',6);
+  R(['ramp','gap','valley','plateau'],'snow',6);
+  R(['gap','plateau','valley'],      'concrete',6);
+  R(['hill','valley','gap','ramp','plateau'],'grass',7);
+
+  /* ── Tier 7: Serious challenge (31-35) ── */
+  R(['valley','gap','ramp'],         'mud',7);
+  R(['gap','gap','valley'],          'snow',6);
+  R(['plateau','gap','valley','ramp'],'blacktop',7);
+  R(['gap','valley','gap'],          'mud',6);
+  R(['ramp','plateau','gap','valley'],'snow',7);
+
+  /* ── Tier 8: Expert (36-40) ── */
+  R(['gap','valley','gap','ramp'],   'mud',7);
+  R(['valley','gap','plateau','gap'],'snow',7);
+  R(['gap','ramp','gap','valley'],   'concrete',8);
+  R(['plateau','valley','gap','gap'],'mud',7);
+  R(['gap','valley','ramp','gap','plateau'],'snow',8);
+
+  /* ── Tier 9: Master (41-45) ── */
+  R(['gap','gap','valley','ramp'],   'mud',8);
+  R(['valley','gap','gap','plateau'],'snow',8);
+  R(['gap','valley','gap','ramp','gap'],'blacktop',8);
+  R(['plateau','gap','valley','gap'],'mud',8);
+  R(['gap','gap','valley','gap'],    'snow',8);
+
+  /* ── Tier 10: Insanity (46-50) ── */
+  R(['gap','valley','gap','gap'],    'mud',9);
+  R(['gap','gap','valley','gap','ramp'],'snow',9);
+  R(['valley','gap','gap','plateau','gap'],'mud',9);
+  R(['gap','gap','gap','valley'],    'snow',9);
+  R(['gap','valley','gap','gap','plateau','gap'],'mud',10);
+
+  for(var L=0;L<RECIPES.length;L++){
+    var rec=RECIPES[L];
     var r=rnd(L*131+7);
     var pts=[],x=0,base=BASE_Y;
+    var diff=L/RECIPES.length; /* 0..1 difficulty scalar */
 
-    /* flat start so player can orient */
+    /* flat start */
     pts.push([-200,base]);pts.push([0,base]);pts.push([200,base]);
     x=200;
 
-    var numFeatures=3+Math.floor(L*0.38); /* 3 at L0, up to ~10 at L19 */
-
-    for(var f=0;f<numFeatures;f++){
-      /* pool of available feature types expands with level */
-      var pool=['hill','hill']; /* hills always available */
-      if(L>=2) pool.push('ramp');
-      if(L>=4) pool.push('valley');
-      if(L>=6) pool.push('gap');
-      if(L>=9) pool.push('plateau');
-      var type=pool[Math.floor(r()*pool.length)];
-
-      x+=100+r()*130; /* approach gap before feature */
+    /* cycle through the recipe's feature pool */
+    for(var f=0;f<rec.numF;f++){
+      var type=rec.feats[f%rec.feats.length];
+      x+=100+r()*120;
 
       switch(type){
         case 'hill':{
-          var hh=28+L*2.8+r()*38;
+          var hh=25+diff*30+r()*35;
           pts.push([x,base-hh]);
-          x+=110+r()*130;
+          x+=100+r()*120;
           pts.push([x,base]);
           break;
         }
         case 'ramp':{
-          /* steep climb, flat top, slope back */
-          var rh=55+L*3+r()*30, rw=55+r()*35, rtop=60+r()*80;
+          var rh=45+diff*35+r()*25;
+          var rw=65+r()*30;
+          var rtop=60+r()*70;
           pts.push([x+rw,base-rh]);
           x+=rw+rtop;
           pts.push([x,base-rh]);
-          pts.push([x+50,base]);
-          x+=50;
+          pts.push([x+55,base]);
+          x+=55;
           break;
         }
         case 'valley':{
-          /* downward dip — deep enough to trap low-speed cars */
-          var vd=50+L*3+r()*35, vw=90+r()*70;
-          pts.push([x,base+vd]);
-          x+=vw;
-          pts.push([x,base]);
+          var vd=35+diff*45+r()*30;
+          var vwL=65+r()*40;   /* descent width  */
+          var vFlat=30+r()*40; /* flat valley bottom */
+          var vwR=65+r()*40;   /* ascent width   */
+          pts.push([x+vwL, base+vd]);       /* down into valley  */
+          pts.push([x+vwL+vFlat, base+vd]); /* valley floor      */
+          pts.push([x+vwL+vFlat+vwR, base]);/* climb out         */
+          x+=vwL+vFlat+vwR;
           break;
         }
         case 'gap':{
-          /* Jump gap: gentle ramp up, flat launch pad at the edge.
-             catmullRom() skips cliff segments (dy>8*dx) and clamps
-             neighbor influence, so the launch lip stays flat.          */
-          var gw=25+L*3;   /* 43px at L6 → 82px at L19                */
-          x+=200;           /* long flat run-up to build speed          */
-          pts.push([x,      base]);      /* ramp foot                    */
-          pts.push([x+120,  base-20]);   /* gentle ramp (~9.5°)          */
-          pts.push([x+180,  base-28]);   /* upper ramp                   */
-          pts.push([x+220,  base-28]);   /* flat launch pad start        */
-          pts.push([x+250,  base-28]);   /* flat launch pad edge         */
-          pts.push([x+252,  base+700]);  /* cliff wall (near-vertical)   */
-          pts.push([x+252+gw, base+700]);/* pit floor                    */
-          pts.push([x+254+gw, base-28]); /* far cliff wall               */
-          pts.push([x+290+gw, base-28]); /* flat landing pad             */
-          pts.push([x+350+gw, base]);    /* landing slope down           */
+          var gw=25+diff*55;
+          x+=160+diff*40;
+          pts.push([x,      base]);
+          pts.push([x+120,  base-20]);
+          pts.push([x+180,  base-28]);
+          pts.push([x+220,  base-28]);
+          pts.push([x+250,  base-28]);
+          pts.push([x+252,  base+700]);
+          pts.push([x+252+gw, base+700]);
+          pts.push([x+254+gw, base-28]);
+          pts.push([x+290+gw, base-28]);
+          pts.push([x+350+gw, base]);
           x+=gw+380;
           break;
         }
         case 'plateau':{
-          /* raised flat section — must climb up and drop off far side */
-          var ph=58+r()*42, pw=100+r()*90;
-          pts.push([x+55,base-ph]);
-          pts.push([x+55+pw,base-ph]);
-          pts.push([x+90+pw,base]);
-          x+=pw+95;
+          var ph=50+diff*40+r()*30;
+          var pw=90+r()*80;
+          pts.push([x+60,base-ph]);
+          pts.push([x+60+pw,base-ph]);
+          pts.push([x+100+pw,base]);
+          x+=pw+105;
           break;
         }
       }
@@ -177,7 +263,7 @@ var LEVELS=[];
     /* flat finish */
     x+=220;
     pts.push([x,base]);pts.push([x+420,base]);
-    LEVELS.push({pts:pts,flag:x+160});
+    LEVELS.push({pts:pts,flag:x+160,surface:rec.surface});
   }
 })();
 
@@ -377,9 +463,12 @@ function step(dt){
        coasting  → wheels nearly frictionless (car rolls freely)
        driving   → moderate grip so wheel force transfers to chassis
        braking   → strong friction to scrub speed quickly              */
+  var surfFR=(SURFACES[LEVELS[level].surface]||SURFACES.grass).fr;
   var wFR = input.brake ? 0.68
-           : input.gas  ? 0.88
-           :              0.9995; /* coasting: almost no rolling resistance */
+           : input.gas  ? lerp(0.88,0.88*surfFR,0.6)
+           :              0.9995;
+  /* surface also scales drive force: slippery = less traction */
+  var driveF=11*clamp(surfFR,0.7,1.15);
 
   for(var s=0;s<sub;s++){
     /* integrate — tiny air-drag damps out-of-control speeds gently */
@@ -392,7 +481,7 @@ function step(dt){
     var dir=input.gas?1:(input.brake?-1:0);
     if(dir!==0){
       for(var w=0;w<wheels.length;w++){
-        if(wheels[w].onGround){wheels[w].x+=11*dir*sdt*10;wheels[w].spin+=dir*0.4;}
+        if(wheels[w].onGround){wheels[w].x+=driveF*dir*sdt*10;wheels[w].spin+=dir*0.4;}
       }
     } else {
       /* cosmetic spin-down when coasting */
@@ -633,13 +722,14 @@ function draw(){
   cam.x=lerp(cam.x,c.x-W*0.38,0.12);
   cam.y=lerp(cam.y,c.y-H*0.55,0.12);
   ctx.save();ctx.translate(-cam.x,-cam.y);
-  /* terrain — uses smoothPts (Catmull-Rom spline through control points) */
+  /* terrain — uses smoothPts + per-level surface colors */
+  var surf=SURFACES[LEVELS[level].surface]||SURFACES.grass;
   var g=smoothPts;
   ctx.beginPath();ctx.moveTo(g[0][0],g[0][1]);
   for(var i=1;i<g.length;i++)ctx.lineTo(g[i][0],g[i][1]);
   ctx.lineTo(g[g.length-1][0]+50,5000);ctx.lineTo(g[0][0]-50,5000);
-  ctx.closePath();ctx.fillStyle='#5a8f3a';ctx.fill();
-  ctx.lineWidth=6;ctx.strokeStyle='#3f6b27';ctx.lineJoin='round';
+  ctx.closePath();ctx.fillStyle=surf.fill;ctx.fill();
+  ctx.lineWidth=6;ctx.strokeStyle=surf.stroke;ctx.lineJoin='round';
   ctx.beginPath();ctx.moveTo(g[0][0],g[0][1]);
   for(var j=1;j<g.length;j++)ctx.lineTo(g[j][0],g[j][1]);
   ctx.stroke();
@@ -677,6 +767,8 @@ function loadLevel(i){
   buildSegs();flagX=LEVELS[level].flag;
   buildCar(120,groundY(120)-WDY-WR);
   particles=[];skids=[];
+  var surf=SURFACES[LEVELS[level].surface]||SURFACES.grass;
+  cv.style.background='linear-gradient('+surf.sky+','+lighten(surf.sky,40)+' 70%)';
   cam.x=0;cam.y=0;elapsed=0;t0=performance.now();ended=false;running=true;flipT=0;
   document.getElementById('end').classList.add('hide');
   document.getElementById('menu').classList.add('hide');
@@ -705,6 +797,8 @@ function showEnd(won,msg){
 }
 function hud(){
   document.getElementById('hLevel').textContent=level+1;
+  var surf=SURFACES[LEVELS[level].surface]||SURFACES.grass;
+  document.getElementById('hSurf').textContent=surf.name;
   document.getElementById('hTime').textContent=elapsed.toFixed(1);
   document.getElementById('hTries').textContent=tries;
 }
