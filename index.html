@@ -144,22 +144,22 @@ var LEVELS=[];
           break;
         }
         case 'gap':{
-          /* Jump gap: GENTLE ramp (~15° grade) so the car can drive up,
-             with a post-crest dip so Catmull-Rom tangent at the crest
-             points slightly upward for a real launch.
-             Previous ramp (55px rise/45px run = 51°) was unclimbable. */
-          var gw=40+L*4;   /* 64px at L6 → 116px at L19               */
-          x+=120;           /* extra flat run-up to build speed          */
-          pts.push([x,      base]);      /* ramp foot                     */
-          pts.push([x+85,   base-22]);   /* lower ramp (0.26 grad, 14°)   */
-          pts.push([x+155,  base-40]);   /* crest                         */
-          pts.push([x+195,  base-28]);   /* post-crest dip — tangent at   */
-                                         /* crest becomes slightly upward  */
-          pts.push([x+197,  base+700]);  /* near-vertical near wall        */
-          pts.push([x+197+gw, base+700]);/* pit floor                     */
-          pts.push([x+199+gw, base-28]); /* near-vertical far wall        */
-          pts.push([x+250+gw, base]);    /* landing slope                 */
-          x+=gw+270;
+          /* Jump gap: gentle ramp up, flat launch pad at the edge.
+             catmullRom() skips cliff segments (dy>8*dx) and clamps
+             neighbor influence, so the launch lip stays flat.          */
+          var gw=25+L*3;   /* 43px at L6 → 82px at L19                */
+          x+=200;           /* long flat run-up to build speed          */
+          pts.push([x,      base]);      /* ramp foot                    */
+          pts.push([x+120,  base-20]);   /* gentle ramp (~9.5°)          */
+          pts.push([x+180,  base-28]);   /* upper ramp                   */
+          pts.push([x+220,  base-28]);   /* flat launch pad start        */
+          pts.push([x+250,  base-28]);   /* flat launch pad edge         */
+          pts.push([x+252,  base+700]);  /* cliff wall (near-vertical)   */
+          pts.push([x+252+gw, base+700]);/* pit floor                    */
+          pts.push([x+254+gw, base-28]); /* far cliff wall               */
+          pts.push([x+290+gw, base-28]); /* flat landing pad             */
+          pts.push([x+350+gw, base]);    /* landing slope down           */
+          x+=gw+380;
           break;
         }
         case 'plateau':{
@@ -308,7 +308,17 @@ var smoothPts=[];
 function catmullRom(cpts){
   var STEPS=8, out=[];
   for(var i=0;i<cpts.length-1;i++){
+    var dx=Math.abs(cpts[i+1][0]-cpts[i][0]);
+    var dy=Math.abs(cpts[i+1][1]-cpts[i][1]);
+    /* Skip spline interpolation for near-vertical cliff segments
+       (dy > 8*dx).  Just emit the raw endpoints so the launch lip
+       and landing edge stay sharp and flat — no spline pull-down. */
+    if(dy>8*dx){ out.push(cpts[i]); continue; }
     var p0=cpts[Math.max(i-1,0)],p1=cpts[i],p2=cpts[i+1],p3=cpts[Math.min(i+2,cpts.length-1)];
+    /* Also clamp neighbor influence: if p0 or p3 is a cliff point,
+       substitute p1 or p2 so the tangent stays local. */
+    if(Math.abs(p0[1]-p1[1])>8*Math.abs(p0[0]-p1[0])) p0=p1;
+    if(Math.abs(p3[1]-p2[1])>8*Math.abs(p3[0]-p2[0])) p3=p2;
     for(var j=0;j<STEPS;j++){
       var t=j/STEPS,t2=t*t,t3=t2*t;
       out.push([
