@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>Drive Mad — Claude Games (2D)</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;overflow:hidden;}
+  body{background:#11151f;font-family:'Segoe UI',system-ui,sans-serif;color:#fff;touch-action:none;}
+  canvas{display:block;width:100vw;height:100vh;background:linear-gradient(#6fb7e6,#bfe3ff 70%);}
+  .hud{position:fixed;top:12px;left:14px;right:14px;display:flex;justify-content:space-between;
+       pointer-events:none;font-weight:700;text-shadow:0 2px 4px rgba(0,0,0,.4);}
+  .badge{background:rgba(0,0,0,.35);padding:6px 12px;border-radius:10px;font-size:15px;margin-bottom:6px;}
+  .badge b{color:#ffd23f;}
+  .topbar{position:fixed;top:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px;}
+  .iconbtn{background:rgba(0,0,0,.35);border:none;color:#fff;width:40px;height:40px;border-radius:10px;font-size:18px;cursor:pointer;}
+  .controls{position:fixed;bottom:20px;left:0;right:0;display:flex;justify-content:space-between;padding:0 20px;pointer-events:none;}
+  .ctrl{pointer-events:auto;width:92px;height:92px;border-radius:50%;border:2px solid rgba(255,255,255,.4);
+        background:rgba(255,255,255,.16);color:#fff;font-size:38px;display:flex;align-items:center;justify-content:center;
+        backdrop-filter:blur(3px);user-select:none;transition:transform .05s,background .1s;}
+  .ctrl.down{background:#ffd23f;color:#222;transform:scale(.92);}
+  .overlay{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;
+           background:rgba(8,10,20,.82);text-align:center;padding:24px;z-index:10;}
+  .overlay h1{font-size:clamp(36px,8vw,70px);color:#ffd23f;letter-spacing:2px;text-shadow:0 4px 0 #b8860b,0 8px 20px rgba(0,0,0,.5);}
+  .overlay h2{font-size:clamp(24px,5vw,40px);}
+  .overlay p{color:#aab0d0;max-width:460px;line-height:1.5;}
+  .btn{cursor:pointer;border:none;padding:16px 44px;border-radius:14px;font-size:22px;font-weight:800;
+       background:#ffd23f;color:#23160a;box-shadow:0 6px 0 #b8860b;transition:transform .06s,box-shadow .06s;}
+  .btn:active{transform:translateY(4px);box-shadow:0 2px 0 #b8860b;}
+  .btn.alt{background:#23273f;color:#fff;box-shadow:0 6px 0 #11131f;}
+  .grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;max-height:38vh;overflow-y:auto;padding:6px;max-width:min(92vw,440px);}
+  .lvl{width:52px;height:52px;border-radius:12px;background:#23273f;color:#fff;border:2px solid rgba(255,255,255,.12);
+       font-size:18px;font-weight:800;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  .lvl.done{background:#4ade80;color:#0a2a14;} .lvl.locked{opacity:.4;cursor:not-allowed;}
+  .hide{display:none!important;}
+  .build{font-size:13px;color:#4ade80;font-weight:700;letter-spacing:1px;}
+  @media(max-width:560px){.ctrl{width:78px;height:78px;font-size:32px;}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud">
+  <div><div class="badge">Level <b id="hLevel">1</b></div><div class="badge">Time <b id="hTime">0.0</b>s</div></div>
+  <div style="text-align:right"><div class="badge">Tries <b id="hTries">0</b></div></div>
+</div>
+<div class="topbar">
+  <button class="iconbtn" id="bMenu">≡</button>
+  <button class="iconbtn" id="bRestart">↻</button>
+</div>
+<div class="controls">
+  <button class="ctrl" id="bBrake">◄</button>
+  <button class="ctrl" id="bGas">►</button>
+</div>
+
+<div class="overlay" id="menu">
+  <h1>DRIVE MAD</h1>
+  <div class="build">2D · BUILD 10 · runs anywhere</div>
+  <p>Drive the monster truck to the flag — don't flip! Hold <b>►</b> to drive, <b>◄</b> to brake/reverse.</p>
+  <button class="btn" id="bPlay">PLAY</button>
+  <div class="grid" id="grid"></div>
+  <p style="font-size:12px">Keyboard: → drive · ← brake · R restart</p>
+</div>
+
+<div class="overlay hide" id="end">
+  <h2 id="eTitle"></h2><p id="eMsg"></p>
+  <div style="display:flex;gap:14px;flex-wrap:wrap;justify-content:center">
+    <button class="btn" id="bNext">NEXT ►</button>
+    <button class="btn alt" id="bRetry">RETRY ↻</button>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+var cv=document.getElementById('c'),ctx=cv.getContext('2d');
+var W=0,H=0,DPR=Math.min(window.devicePixelRatio||1,2);
+function resize(){W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;}
+addEventListener('resize',resize);resize();
+
+function clamp(v,a,b){return v<a?a:v>b?b:v;}
+function lerp(a,b,t){return a+(b-a)*t;}
+
+/* ── level generation ─────────────────────────────────────────────────────
+   Each level is a polyline of [x,y] terrain points (y down, base ≈ 420).
+   Features unlock as levels progress:
+     hill     – gentle rolling hump
+     ramp     – steep climb to a flat top, slope back down
+     valley   – dip that slows you; bad ones need momentum to exit
+     plateau  – elevated flat section you drive up onto
+     gap      – launch ramp → vertical cliff → pit → far side
+                (car must jump; fall-in triggers crash at y > 820)
+──────────────────────────────────────────────────────────────────────────*/
+var BASE_Y=420;
+var LEVELS=[];
+(function(){
+  var rnd=function(seed){return function(){seed=(seed*9301+49297)%233280;return seed/233280;};};
+  for(var L=0;L<20;L++){
+    var r=rnd(L*131+7);
+    var pts=[],x=0,base=BASE_Y;
+
+    /* flat start so player can orient */
+    pts.push([-200,base]);pts.push([0,base]);pts.push([200,base]);
+    x=200;
+
+    var numFeatures=3+Math.floor(L*0.38); /* 3 at L0, up to ~10 at L19 */
+
+    for(var f=0;f<numFeatures;f++){
+      /* pool of available feature types expands with level */
+      var pool=['hill','hill']; /* hills always available */
+      if(L>=2) pool.push('ramp');
+      if(L>=4) pool.push('valley');
+      if(L>=6) pool.push('gap');
+      if(L>=9) pool.push('plateau');
+      var type=pool[Math.floor(r()*pool.length)];
+
+      x+=100+r()*130; /* approach gap before feature */
+
+      switch(type){
+        case 'hill':{
+          var hh=28+L*2.8+r()*38;
+          pts.push([x,base-hh]);
+          x+=110+r()*130;
+          pts.push([x,base]);
+          break;
+        }
+        case 'ramp':{
+          /* steep climb, flat top, slope back */
+          var rh=55+L*3+r()*30, rw=55+r()*35, rtop=60+r()*80;
+          pts.push([x+rw,base-rh]);
+          x+=rw+rtop;
+          pts.push([x,base-rh]);
+          pts.push([x+50,base]);
+          x+=50;
+          break;
+        }
+        case 'valley':{
+          /* downward dip — deep enough to trap low-speed cars */
+          var vd=50+L*3+r()*35, vw=90+r()*70;
+          pts.push([x,base+vd]);
+          x+=vw;
+          pts.push([x,base]);
+          break;
+        }
+        case 'gap':{
+          /* Proper jump gap with a crest + brief post-crest dip.
+             The post-crest point makes Catmull-Rom tangent at the crest
+             point UPWARD, so the spline launches the car rather than
+             curving it into the pit.
+             Gap width starts smaller at L6 and grows with level.        */
+          var gw=40+L*5;   /* 70 at L6 → 135 at L19, gentler ramp-up   */
+          x+=180;           /* long flat runway to build speed            */
+          pts.push([x,      base]);      /* runway end / ramp foot        */
+          pts.push([x+45,   base-55]);   /* ramp slope                    */
+          pts.push([x+80,   base-80]);   /* crest (launch point)          */
+          pts.push([x+105,  base-50]);   /* post-crest dip — forces       */
+                                         /* Catmull tangent UP at crest   */
+          pts.push([x+107,  base+700]);  /* near-vertical near wall       */
+          pts.push([x+107+gw, base+700]);/* pit floor                     */
+          pts.push([x+109+gw, base-50]); /* near-vertical far wall        */
+          pts.push([x+140+gw, base]);    /* landing slope                 */
+          x+=gw+200;
+          break;
+        }
+        case 'plateau':{
+          /* raised flat section — must climb up and drop off far side */
+          var ph=58+r()*42, pw=100+r()*90;
+          pts.push([x+55,base-ph]);
+          pts.push([x+55+pw,base-ph]);
+          pts.push([x+90+pw,base]);
+          x+=pw+95;
+          break;
+        }
+      }
+    }
+
+    /* flat finish */
+    x+=220;
+    pts.push([x,base]);pts.push([x+420,base]);
+    LEVELS.push({pts:pts,flag:x+160});
+  }
+})();
+
+/* ── physics ──────────────────────────────────────────────────────────── */
+var GRAV=2000;
+function Pt(x,y,m){this.x=x;this.y=y;this.px=x;this.py=y;this.m=m||1;}
+function Stick(a,b,s){this.a=a;this.b=b;this.len=Math.hypot(a.x-b.x,a.y-b.y);this.s=s||1;}
+Stick.prototype.solve=function(){
+  var a=this.a,b=this.b,dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||0.001;
+  var diff=(d-this.len)/d*0.5*this.s,ia=1/a.m,ib=1/b.m,tt=ia+ib;
+  var ox=dx*diff,oy=dy*diff;
+  a.x+=ox*(ia/tt);a.y+=oy*(ia/tt);b.x-=ox*(ib/tt);b.y-=oy*(ib/tt);
+};
+
+/* collide point p against segment s with radius rad and friction fr.
+   fr close to 1 = almost no friction (neutral roll).
+   fr = 0 = instant stop on contact.                                      */
+function collide(p,s,rad,fr){
+  var ax=s.x1,ay=s.y1,bx=s.x2,by=s.y2,abx=bx-ax,aby=by-ay;
+  var apx=p.x-ax,apy=p.y-ay,L2=abx*abx+aby*aby||0.001;
+  var t=clamp((apx*abx+apy*aby)/L2,0,1),cx=ax+abx*t,cy=ay+aby*t;
+  var dx=p.x-cx,dy=p.y-cy,d=Math.hypot(dx,dy);
+  if(d<rad){
+    if(d<0.001){dx=0;dy=-1;d=1;}
+    var nx=dx/d,ny=dy/d;
+    p.x+=nx*(rad-d);p.y+=ny*(rad-d);
+    /* retain fr fraction of tangential velocity (= rolling / sliding friction) */
+    var vx=p.x-p.px,vy=p.y-p.py,tnx=-ny,tny=nx,vt=vx*tnx+vy*tny;
+    p.px=p.x-tnx*vt*fr;p.py=p.y-tny*vt*fr;
+    return true;
+  }
+  return false;
+}
+
+/* car geometry — WHB = half-wheelbase (wider than body for stability) */
+var BW=78,BH=20,WR=27,WDY=22,WHB=50;
+
+var pts,sticks,wheels,chassis,head,segs=[],flagX=0;
+var level=0,tries=0,elapsed=0,t0=0,running=false,ended=false,flipT=0;
+var input={gas:false,brake:false};
+var cam={x:0,y:0};
+var progress={};
+try{progress=JSON.parse(localStorage.getItem('drivemad2d')||'{}');}catch(e){progress={};}
+function save(){try{localStorage.setItem('drivemad2d',JSON.stringify(progress));}catch(e){}}
+
+/* ── effects ── */
+var skids=[],skidPrev=[null,null],MAX_SKIDS=500,particles=[];
+function addSkid(wi,x,y){
+  if(skidPrev[wi])skids.push({x1:skidPrev[wi].x,y1:skidPrev[wi].y,x2:x,y2:y});
+  if(skids.length>MAX_SKIDS)skids.shift();
+  skidPrev[wi]={x:x,y:y};
+}
+function clearSkid(wi){skidPrev[wi]=null;}
+function spawnParticles(x,y){
+  var cols=['#ff6b35','#ffd23f','#ff2020','#ffffff','#aaaaaa','#ff9900','#ffcc00'];
+  for(var i=0;i<50;i++){
+    var a=Math.random()*Math.PI*2,spd=80+Math.random()*380;
+    particles.push({x:x,y:y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-220,
+      life:1,r:3+Math.random()*10,col:cols[Math.floor(Math.random()*cols.length)]});
+  }
+}
+
+/* ── quips ─────────────────────────────────────────────────────────────
+   Crash phrases tier up with each consecutive fail on the same level.
+   Win phrases are always encouraging (with a hint of sarcasm).
+──────────────────────────────────────────────────────────────────────── */
+var CRASH_QUIPS=[
+  /* tier 0 — 1st fail, gentle */
+  ['Oops! The truck had other plans.',
+   'A classic rookie moment. Very relatable.',
+   'Physics wins this round.',
+   "Everyone does that once. Right?",
+   'Bold attempt. Very bold.'],
+  /* tier 1 — 2nd–3rd fail, light tease */
+  ['Still getting the hang of it, huh?',
+   "You know the truck goes FORWARD, right?",
+   "Let's call that a 'style choice.'",
+   'Almost! Well... not really.',
+   'The hill is stationary. Just so you know.'],
+  /* tier 2 — 4th–6th fail, properly teasing */
+  ['Have you considered letting the truck drive itself?',
+   "I've seen shopping carts handle hills better.",
+   'Your driver is starting to question your decisions.',
+   'Impressively bad. Like, genuinely impressive.',
+   "Maybe try going... over it? Instead of into it?"],
+  /* tier 3 — 7th–10th fail, insulting */
+  ["Scientists studying failure have requested your data.",
+   'My grandma drives better. She has been gone ten years.',
+   'The truck has filed a formal complaint.',
+   'Even the flag feels sorry for you. THE FLAG.',
+   "Are you sure you're pressing the right button?"],
+  /* tier 4 — 11th–15th fail, roasting */
+  ['You are SPECIAL. Not in the complimentary way.',
+   'The Guinness people want a word.',
+   'The truck has written a will. It left everything to the hill.',
+   "This level is rated 'slightly harder than doing nothing.'",
+   'Have you tried turning the screen a different direction?'],
+  /* tier 5 — 16th+ fail, absolutely cooked */
+  ['A monument to perseverance and catastrophic failure.',
+   'The mountain has a name for you. It is not flattering.',
+   'The truck has requested early retirement.',
+   'You are the reason levels have retry buttons.',
+   'I genuinely cannot tell if you are trying.']
+];
+var WIN_QUIPS=[
+  'Nailed it! You are basically a professional.',
+  'Monster truck royalty. Look at you.',
+  'Smooth. Suspiciously smooth.',
+  'Easy when you know how. Do you know how? Debatable.',
+  'Your driver is crying. Tears of joy. Mostly relief.',
+  'The flag was rooting for you the whole time.',
+  'Physics: eventually tamed.',
+  'Not bad for someone with your track record.',
+  'That hill will think twice next time.'
+];
+function pickCrash(){
+  var t=tries<=0?0:tries<=2?1:tries<=5?2:tries<=9?3:tries<=14?4:5;
+  var p=CRASH_QUIPS[t]; return p[Math.floor(Math.random()*p.length)];
+}
+function pickWin(){ return WIN_QUIPS[Math.floor(Math.random()*WIN_QUIPS.length)]; }
+
+/* ── Catmull-Rom spline ───────────────────────────────────────────────
+   Converts raw control points into a dense smooth curve.
+   STEPS sub-segments per interval; gap walls stay nearly vertical
+   because their x-extent is tiny even after interpolation.
+──────────────────────────────────────────────────────────────────────── */
+var smoothPts=[];
+function catmullRom(cpts){
+  var STEPS=8, out=[];
+  for(var i=0;i<cpts.length-1;i++){
+    var p0=cpts[Math.max(i-1,0)],p1=cpts[i],p2=cpts[i+1],p3=cpts[Math.min(i+2,cpts.length-1)];
+    for(var j=0;j<STEPS;j++){
+      var t=j/STEPS,t2=t*t,t3=t2*t;
+      out.push([
+        0.5*(2*p1[0]+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3),
+        0.5*(2*p1[1]+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3)
+      ]);
+    }
+  }
+  out.push(cpts[cpts.length-1]);
+  return out;
+}
+
+/* ── terrain helpers ── */
+function groundY(x){
+  var g=smoothPts;
+  for(var i=0;i<g.length-1;i++){
+    if(x>=g[i][0]&&x<=g[i+1][0]){
+      var t=(x-g[i][0])/((g[i+1][0]-g[i][0])||1);
+      return lerp(g[i][1],g[i+1][1],t);
+    }
+  }
+  return g[g.length-1][1];
+}
+function buildSegs(){
+  segs=[];
+  for(var i=0;i<smoothPts.length-1;i++)
+    segs.push({x1:smoothPts[i][0],y1:smoothPts[i][1],x2:smoothPts[i+1][0],y2:smoothPts[i+1][1]});
+}
+
+/* ── car ── */
+function buildCar(x,y){
+  var hw=BW/2,hh=BH/2;
+  /* high mass on chassis corners = heavy body that resists rotation */
+  var tl=new Pt(x-hw,y-hh,4),tr=new Pt(x+hw,y-hh,4);
+  var br=new Pt(x+hw,y+hh,4),bl=new Pt(x-hw,y+hh,4);
+  head=new Pt(x+hw*0.45,y-hh-22,0.7);
+  chassis=[tl,tr,br,bl];
+  var wL=new Pt(x-WHB,y+WDY,2.5);wL.r=WR;wL.spin=0;
+  var wR=new Pt(x+WHB,y+WDY,2.5);wR.r=WR;wR.spin=0;
+  wheels=[wL,wR];
+  pts=[tl,tr,br,bl,head,wL,wR];
+  sticks=[];
+  function S(a,b,k){sticks.push(new Stick(a,b,k));}
+  S(tl,tr,1);S(tr,br,1);S(br,bl,1);S(bl,tl,1);S(tl,br,1);S(tr,bl,1);
+  S(tr,head,0.7);S(tl,head,0.65);S(br,head,0.3);
+  S(bl,wL,0.30);S(tl,wL,0.30);S(br,wL,0.14);
+  S(br,wR,0.30);S(tr,wR,0.30);S(bl,wR,0.14);
+  S(wL,wR,0.70); /* stiff axle resists differential wheel lift */
+  skidPrev=[null,null];
+}
+
+function step(dt){
+  var sub=6,sdt=dt/sub;
+
+  /* friction coefficients:
+       coasting  → wheels nearly frictionless (car rolls freely)
+       driving   → moderate grip so wheel force transfers to chassis
+       braking   → strong friction to scrub speed quickly              */
+  var wFR = input.brake ? 0.68
+           : input.gas  ? 0.88
+           :              0.9995; /* coasting: almost no rolling resistance */
+
+  for(var s=0;s<sub;s++){
+    /* integrate — tiny air-drag damps out-of-control speeds gently */
+    for(var i=0;i<pts.length;i++){
+      var p=pts[i],vx=p.x-p.px,vy=p.y-p.py;
+      p.px=p.x;p.py=p.y;
+      p.x+=vx*0.9998;p.y+=vy*0.9998+GRAV*sdt*sdt;
+    }
+    /* drive force: push wheel position; sticks pull the chassis */
+    var dir=input.gas?1:(input.brake?-1:0);
+    if(dir!==0){
+      for(var w=0;w<wheels.length;w++){
+        if(wheels[w].onGround){wheels[w].x+=11*dir*sdt*10;wheels[w].spin+=dir*0.4;}
+      }
+    } else {
+      /* cosmetic spin-down when coasting */
+      for(var w2=0;w2<wheels.length;w2++) wheels[w2].spin*=0.98;
+    }
+    for(var it=0;it<4;it++) for(var k=0;k<sticks.length;k++) sticks[k].solve();
+    /* collisions */
+    for(var wg=0;wg<wheels.length;wg++) wheels[wg].onGround=false;
+    for(var wi=0;wi<wheels.length;wi++)
+      for(var sg=0;sg<segs.length;sg++)
+        if(collide(wheels[wi],segs[sg],wheels[wi].r,wFR)) wheels[wi].onGround=true;
+    /* chassis body corners — medium friction so body doesn't slide weirdly */
+    for(var ci=0;ci<chassis.length;ci++)
+      for(var sg2=0;sg2<segs.length;sg2++) collide(chassis[ci],segs[sg2],5,0.80);
+    /* driver head — crash on touch */
+    for(var sg3=0;sg3<segs.length;sg3++)
+      if(collide(head,segs[sg3],8,0.75)&&running&&!ended) crash('Ouch — driver hit the ground!');
+  }
+
+  /* skid marks: record trail when throttle/brake applied on ground */
+  for(var wi2=0;wi2<wheels.length;wi2++){
+    var ww=wheels[wi2];
+    if(ww.onGround&&(input.gas||input.brake)){
+      if(Math.hypot(ww.x-ww.px,ww.y-ww.py)>0.3) addSkid(wi2,ww.x,ww.y);
+      else clearSkid(wi2);
+    } else { clearSkid(wi2); }
+  }
+}
+
+function carCenter(){
+  var x=0,y=0;for(var i=0;i<4;i++){x+=chassis[i].x;y+=chassis[i].y;}
+  return{x:x/4,y:y/4};
+}
+function carAngle(){return Math.atan2(chassis[1].y-chassis[0].y,chassis[1].x-chassis[0].x);}
+
+/* ── drawing ── */
+function drawWheel(w){
+  ctx.save();ctx.translate(w.x,w.y);ctx.rotate(w.spin);
+  var r=w.r;
+  /* dark rubber base — slightly oversized for visual mass */
+  ctx.fillStyle='#141414';
+  ctx.beginPath();ctx.arc(0,0,r+5,0,Math.PI*2);ctx.fill();
+  /* sidewall mid-ring */
+  ctx.fillStyle='#222';
+  ctx.beginPath();ctx.arc(0,0,r+1,0,Math.PI*2);ctx.fill();
+  /* 8 large agricultural knobs (tractor-lug style) */
+  var rO=r+5,rI=r-4;
+  for(var k=0;k<8;k++){
+    var a1=(k+0.18)*Math.PI*2/8,a2=(k+0.82)*Math.PI*2/8;
+    ctx.fillStyle='#2d2d2d';
+    ctx.beginPath();ctx.arc(0,0,rO,a1,a2);ctx.arc(0,0,rI,a2,a1,true);ctx.closePath();ctx.fill();
+    /* knob leading-edge highlight */
+    ctx.fillStyle='#3a3a3a';
+    ctx.beginPath();ctx.arc(0,0,rO,a1,(a1+a2)*0.45);ctx.arc(0,0,rI,(a1+a2)*0.45,a1,true);ctx.closePath();ctx.fill();
+  }
+  /* inner sidewall groove ring */
+  ctx.strokeStyle='#181818';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(0,0,rI-1,0,Math.PI*2);ctx.stroke();
+  /* chrome multi-piece rim */
+  var rimR=r*0.56;
+  ctx.fillStyle='#c6c6c6';ctx.beginPath();ctx.arc(0,0,rimR,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#888';ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(0,0,rimR,0,Math.PI*2);ctx.stroke();
+  ctx.strokeStyle='#b0b0b0';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(0,0,rimR*0.77,0,Math.PI*2);ctx.stroke();
+  /* 6 wide chrome spokes */
+  ctx.strokeStyle='#dcdcdc';ctx.lineWidth=6;ctx.lineCap='round';
+  for(var j=0;j<6;j++){
+    var sa=j*Math.PI/3;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(sa)*rimR*0.14,Math.sin(sa)*rimR*0.14);
+    ctx.lineTo(Math.cos(sa)*rimR*0.74,Math.sin(sa)*rimR*0.74);
+    ctx.stroke();
+  }
+  /* center hub */
+  ctx.fillStyle='#e2e2e2';ctx.beginPath();ctx.arc(0,0,rimR*0.20,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#555';ctx.beginPath();ctx.arc(0,0,rimR*0.09,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawCar(){
+  var ang=carAngle();
+  var cx=(chassis[0].x+chassis[1].x+chassis[2].x+chassis[3].x)/4;
+  var cy=(chassis[0].y+chassis[1].y+chassis[2].y+chassis[3].y)/4;
+  drawWheel(wheels[0]);drawWheel(wheels[1]);
+  ctx.save();ctx.translate(cx,cy);ctx.rotate(ang);
+  var ca=Math.cos(-ang),sa=Math.sin(-ang);
+  var w0x=(wheels[0].x-cx)*ca-(wheels[0].y-cy)*sa;
+  var w0y=(wheels[0].x-cx)*sa+(wheels[0].y-cy)*ca;
+  var w1x=(wheels[1].x-cx)*ca-(wheels[1].y-cy)*sa;
+  var w1y=(wheels[1].x-cx)*sa+(wheels[1].y-cy)*ca;
+  var hw=BW/2,hh=BH/2;
+
+  /* === COILOVER SHOCKS (drawn before body so body sits on top) === */
+  function drawShock(bx,by,tx,ty){
+    var dx=tx-bx,dy=ty-by,dl=Math.sqrt(dx*dx+dy*dy)||1;
+    /* shock body */
+    ctx.strokeStyle='#3a3a3a';ctx.lineWidth=5;ctx.lineCap='butt';
+    ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(tx,ty);ctx.stroke();
+    /* piston rod (upper half, lighter) */
+    ctx.strokeStyle='#7a7a7a';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo((bx+tx)/2,(by+ty)/2);ctx.lineTo(tx,ty);ctx.stroke();
+    /* coil spring zigzag (8 loops) */
+    var nx=-dy/dl*7,ny=dx/dl*7,nC=8;
+    ctx.strokeStyle='#8a8a8a';ctx.lineWidth=2.5;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(bx,by);
+    for(var i=1;i<=nC;i++){
+      var t=i/nC,px=bx+dx*t,py=by+dy*t,s=(i%2===0?1:-1);
+      ctx.lineTo(px+nx*s,py+ny*s);
+    }
+    ctx.lineTo(tx,ty);ctx.stroke();
+    /* mount caps */
+    ctx.fillStyle='#5a5a5a';
+    ctx.beginPath();ctx.arc(bx,by,3.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(tx,ty,3.5,0,Math.PI*2);ctx.fill();
+  }
+  /* left (rear) shock — angled inboard */
+  drawShock(w0x, w0y-WR*0.28, -hw+14, -hh+2);
+  /* right (front) shock — angled inboard */
+  drawShock(w1x, w1y-WR*0.28,  hw-14, -hh+2);
+
+  /* === WIDE FENDER FLARES === */
+  var fR=WR+13;
+  function fender(wx,wy){
+    ctx.fillStyle='#a02800';
+    ctx.beginPath();ctx.arc(wx,wy,fR,Math.PI,2*Math.PI);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='#751c00';ctx.lineWidth=2.5;
+    ctx.beginPath();ctx.arc(wx,wy,fR,Math.PI,2*Math.PI);ctx.stroke();
+    /* flare lip ridge */
+    ctx.strokeStyle='#c83a00';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(wx,wy,fR-4,Math.PI+0.1,2*Math.PI-0.1);ctx.stroke();
+  }
+  fender(w0x,w0y);fender(w1x,w1y);
+
+  /* === CHASSIS FRAME (visible skid plate below body) === */
+  ctx.fillStyle='#282828';ctx.fillRect(-hw,-hh,BW,BH+5);
+  ctx.strokeStyle='#444';ctx.lineWidth=1.5;ctx.strokeRect(-hw,-hh,BW,BH+5);
+
+  /* === BED (rear/left section of truck) === */
+  var bedX=hw*0.10;  /* x where bed ends and cab begins */
+  var bedH=20;
+  var bg=ctx.createLinearGradient(0,-hh,0,-hh-bedH);
+  bg.addColorStop(0,'#c53f00');bg.addColorStop(1,'#d85514');
+  ctx.fillStyle=bg;
+  ctx.beginPath();
+  ctx.moveTo(-hw,-hh);ctx.lineTo(bedX,-hh);
+  ctx.lineTo(bedX,-hh-bedH);ctx.lineTo(-hw,-hh-bedH);
+  ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#902800';ctx.lineWidth=2;ctx.stroke();
+  /* bed board lines */
+  ctx.strokeStyle='rgba(0,0,0,0.18)';ctx.lineWidth=1.5;
+  for(var bi=1;bi<3;bi++){
+    var bx2=-hw+(hw+bedX)*bi/3;
+    ctx.beginPath();ctx.moveTo(bx2,-hh+1);ctx.lineTo(bx2,-hh-bedH+2);ctx.stroke();
+  }
+  /* tail light */
+  ctx.fillStyle='#ff2020';
+  ctx.beginPath();ctx.arc(-hw+5,-hh-8,4,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#aa0000';ctx.lineWidth=1;ctx.stroke();
+
+  /* === CAB (front/right section) — SQUARE BODY STYLE === */
+  var cabH=32,cabL=bedX,cabR=hw;
+  var cg=ctx.createLinearGradient(0,-hh,0,-hh-cabH);
+  cg.addColorStop(0,'#c53f00');cg.addColorStop(0.55,'#e05a18');cg.addColorStop(1,'#cc4c12');
+  ctx.fillStyle=cg;
+  /* boxy rectangle — vertical front face, nearly flat roofline */
+  ctx.beginPath();
+  ctx.moveTo(cabL,-hh);ctx.lineTo(cabR,-hh);
+  ctx.lineTo(cabR,-hh-cabH);ctx.lineTo(cabL+2,-hh-cabH);
+  ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#902800';ctx.lineWidth=2;ctx.stroke();
+  /* roof highlight strip */
+  ctx.fillStyle='rgba(255,145,75,0.22)';
+  ctx.fillRect(cabL+2,-hh-cabH,cabR-cabL-2,5);
+
+  /* windshield — large, near-vertical (square-body style) */
+  var wsX1=cabL+5,wsX2=cabR-10,wsY1=-hh-5,wsY2=-hh-cabH+5;
+  ctx.fillStyle='rgba(115,198,255,0.72)';
+  ctx.beginPath();
+  ctx.moveTo(wsX1,wsY1);ctx.lineTo(wsX2,wsY1);
+  ctx.lineTo(wsX2-1,wsY2);ctx.lineTo(wsX1,wsY2);
+  ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(70,150,215,0.55)';ctx.lineWidth=1.5;ctx.stroke();
+  /* center windshield divider pillar */
+  ctx.strokeStyle='rgba(70,150,215,0.6)';ctx.lineWidth=1.5;
+  ctx.beginPath();
+  ctx.moveTo((wsX1+wsX2)*0.5,wsY1);
+  ctx.lineTo((wsX1+wsX2)*0.5-0.5,wsY2);
+  ctx.stroke();
+  /* rear cab window */
+  ctx.fillStyle='rgba(115,198,255,0.42)';
+  ctx.fillRect(cabL+5,wsY2,8,cabH-9);
+
+  /* front grille + headlight */
+  ctx.fillStyle='#1a1a1a';
+  ctx.fillRect(cabR-6,-hh-cabH+12,6,cabH-16);
+  ctx.strokeStyle='#aaa';ctx.lineWidth=1.3;
+  for(var gi=0;gi<5;gi++){
+    var gy=-hh-cabH+15+gi*(cabH-20)/5;
+    ctx.beginPath();ctx.moveTo(cabR-5,gy);ctx.lineTo(cabR,gy);ctx.stroke();
+  }
+  /* round headlight */
+  ctx.fillStyle='#fff8bb';
+  ctx.beginPath();ctx.arc(cabR-3,-hh-7,4.5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(255,230,80,0.55)';
+  ctx.beginPath();ctx.arc(cabR-3,-hh-7,2.8,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#996600';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(cabR-3,-hh-7,4.5,0,Math.PI*2);ctx.stroke();
+  /* chrome front bumper (protrudes right) */
+  ctx.fillStyle='#c8c8c8';ctx.fillRect(cabR,-hh-2,5,10);
+  ctx.strokeStyle='#999';ctx.lineWidth=1;ctx.strokeRect(cabR,-hh-2,5,10);
+
+  /* === DUAL EXHAUST STACKS (rise from hood/firewall area) === */
+  var exX1=cabL+4,exX2=cabL+10;
+  ctx.strokeStyle='#2e2e2e';ctx.lineWidth=5;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(exX1,-hh-3);ctx.lineTo(exX1,-hh-cabH-10);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(exX2,-hh-3);ctx.lineTo(exX2,-hh-cabH-7);ctx.stroke();
+  /* stack tip chrome rings */
+  ctx.strokeStyle='#666';ctx.lineWidth=7;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(exX1,-hh-cabH-9);ctx.lineTo(exX1,-hh-cabH-12);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(exX2,-hh-cabH-6);ctx.lineTo(exX2,-hh-cabH-9);ctx.stroke();
+  /* smoke wisps */
+  ctx.fillStyle='rgba(190,190,190,0.18)';
+  ctx.beginPath();ctx.arc(exX1-1,-hh-cabH-17,7,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(exX2+1,-hh-cabH-13,5,0,Math.PI*2);ctx.fill();
+
+  ctx.restore();
+  /* head / driver */
+  ctx.save();ctx.translate(head.x,head.y);
+  ctx.fillStyle='#dd2020';ctx.beginPath();ctx.arc(0,0,9,Math.PI,2*Math.PI);ctx.fill();
+  ctx.fillStyle='#bb1010';ctx.beginPath();ctx.arc(0,1,9,0,Math.PI);ctx.fill();
+  ctx.fillStyle='rgba(80,185,255,0.88)';ctx.beginPath();ctx.arc(0,-1,7,Math.PI+0.45,2*Math.PI-0.45);ctx.fill();
+  ctx.fillStyle='#f0c090';ctx.beginPath();ctx.arc(0,4,5,0.1,Math.PI-0.1);ctx.fill();
+  ctx.restore();
+}
+
+function draw(){
+  ctx.save();ctx.scale(DPR,DPR);ctx.clearRect(0,0,W,H);
+  var c=carCenter();
+  cam.x=lerp(cam.x,c.x-W*0.38,0.12);
+  cam.y=lerp(cam.y,c.y-H*0.55,0.12);
+  ctx.save();ctx.translate(-cam.x,-cam.y);
+  /* terrain — uses smoothPts (Catmull-Rom spline through control points) */
+  var g=smoothPts;
+  ctx.beginPath();ctx.moveTo(g[0][0],g[0][1]);
+  for(var i=1;i<g.length;i++)ctx.lineTo(g[i][0],g[i][1]);
+  ctx.lineTo(g[g.length-1][0]+50,5000);ctx.lineTo(g[0][0]-50,5000);
+  ctx.closePath();ctx.fillStyle='#5a8f3a';ctx.fill();
+  ctx.lineWidth=6;ctx.strokeStyle='#3f6b27';ctx.lineJoin='round';
+  ctx.beginPath();ctx.moveTo(g[0][0],g[0][1]);
+  for(var j=1;j<g.length;j++)ctx.lineTo(g[j][0],g[j][1]);
+  ctx.stroke();
+  /* skid marks */
+  ctx.lineCap='round';ctx.lineWidth=5;
+  for(var si=0;si<skids.length;si++){
+    var sk=skids[si],alpha=(si/skids.length)*0.30;
+    ctx.strokeStyle='rgba(8,4,0,'+alpha.toFixed(3)+')';
+    ctx.beginPath();ctx.moveTo(sk.x1,sk.y1);ctx.lineTo(sk.x2,sk.y2);ctx.stroke();
+  }
+  /* flag */
+  var fy=groundY(flagX);
+  ctx.strokeStyle='#fff';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(flagX,fy);ctx.lineTo(flagX,fy-90);ctx.stroke();
+  for(var row=0;row<3;row++) for(var col=0;col<4;col++){
+    ctx.fillStyle=((row+col)%2)?'#111':'#fff';
+    ctx.fillRect(flagX+col*11,fy-90+row*11,11,11);
+  }
+  drawCar();
+  /* particles */
+  for(var pi=0;pi<particles.length;pi++){
+    var p=particles[pi];
+    ctx.globalAlpha=Math.max(0,p.life);
+    ctx.fillStyle=p.col;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
+  }
+  ctx.globalAlpha=1;
+  ctx.restore();ctx.restore();
+}
+
+/* ── game flow ── */
+function loadLevel(i){
+  level=clamp(i,0,LEVELS.length-1);
+  smoothPts=catmullRom(LEVELS[level].pts);
+  buildSegs();flagX=LEVELS[level].flag;
+  buildCar(120,groundY(120)-WDY-WR);
+  particles=[];skids=[];
+  cam.x=0;cam.y=0;elapsed=0;t0=performance.now();ended=false;running=true;flipT=0;
+  document.getElementById('end').classList.add('hide');
+  document.getElementById('menu').classList.add('hide');
+  hud();
+}
+function retry(){tries++;loadLevel(level);}
+function nextLevel(){
+  if(level+1<LEVELS.length){tries=0;loadLevel(level+1);}
+  else{showEnd(true,'You beat all '+LEVELS.length+' levels!');document.getElementById('bNext').style.display='none';}
+}
+function crash(msg){
+  if(ended)return;ended=true;running=false;
+  var c=carCenter();spawnParticles(c.x,c.y);
+  showEnd(false,pickCrash());
+}
+function win(){
+  if(ended)return;ended=true;running=false;
+  progress[level]=Math.min(progress[level]||9999,+elapsed.toFixed(2));save();
+  showEnd(true,pickWin()+' ('+elapsed.toFixed(2)+'s, '+(tries+1)+(tries===0?' try':' tries')+')');
+}
+function showEnd(won,msg){
+  document.getElementById('end').classList.remove('hide');
+  document.getElementById('eTitle').textContent=won?'🏁 Level Complete!':'💥 Crashed!';
+  document.getElementById('eMsg').textContent=msg;
+  document.getElementById('bNext').style.display=won?'':'none';
+}
+function hud(){
+  document.getElementById('hLevel').textContent=level+1;
+  document.getElementById('hTime').textContent=elapsed.toFixed(1);
+  document.getElementById('hTries').textContent=tries;
+}
+function buildGrid(){
+  var grid=document.getElementById('grid');grid.innerHTML='';
+  for(var i=0;i<LEVELS.length;i++){(function(i){
+    var b=document.createElement('button');b.className='lvl';b.textContent=i+1;
+    var unlocked=i===0||progress[i-1]!==undefined;
+    if(progress[i]!==undefined)b.className+=' done';
+    if(!unlocked)b.className+=' locked';
+    if(unlocked)b.onclick=function(){tries=0;loadLevel(i);};
+    grid.appendChild(b);
+  })(i);}
+}
+function firstUnfinished(){for(var i=0;i<LEVELS.length;i++)if(progress[i]===undefined)return i;return 0;}
+
+/* ── input ── */
+function hold(id,key){
+  var el=document.getElementById(id);
+  function on(e){e.preventDefault();input[key]=true;el.classList.add('down');}
+  function off(e){e.preventDefault();input[key]=false;el.classList.remove('down');}
+  el.addEventListener('pointerdown',on);el.addEventListener('pointerup',off);
+  el.addEventListener('pointerleave',off);el.addEventListener('pointercancel',off);
+}
+hold('bGas','gas');hold('bBrake','brake');
+addEventListener('keydown',function(e){
+  if(e.repeat)return;var k=e.key.toLowerCase();
+  if(k==='arrowright'||k==='d')input.gas=true;
+  if(k==='arrowleft'||k==='a')input.brake=true;
+  if(k==='r')retry();
+  if((k===' '||k==='enter')&&ended)retry();
+});
+addEventListener('keyup',function(e){
+  var k=e.key.toLowerCase();
+  if(k==='arrowright'||k==='d')input.gas=false;
+  if(k==='arrowleft'||k==='a')input.brake=false;
+});
+document.getElementById('bPlay').onclick=function(){tries=0;loadLevel(firstUnfinished());};
+document.getElementById('bRetry').onclick=retry;
+document.getElementById('bNext').onclick=nextLevel;
+document.getElementById('bRestart').onclick=retry;
+document.getElementById('bMenu').onclick=function(){
+  running=false;buildGrid();
+  document.getElementById('menu').classList.remove('hide');
+  document.getElementById('end').classList.add('hide');
+};
+
+/* ── main loop ── */
+var last=performance.now(),lastWall=last;
+function frame(now){
+  var dt=Math.min(0.033,(now-last)/1000)||0.016;last=now;
+  for(var pi=particles.length-1;pi>=0;pi--){
+    var p=particles[pi];
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=GRAV*dt;p.life-=dt*1.2;
+    if(p.life<=0)particles.splice(pi,1);
+  }
+  if(running&&!ended){
+    step(dt);elapsed=(performance.now()-t0)/1000;
+    var c=carCenter(),ang=Math.abs(carAngle());
+    if(ang>2.75){flipT+=dt;}else{flipT=0;}
+    if(flipT>0.5) crash('Flipped over!');
+    /* fixed y floor — triggers when car falls into a gap (pit floor ≈ y 1100) */
+    if(c.y>820) crash('Fell into the pit!');
+    if(c.x>flagX-6&&elapsed>1.5) win();
+    hud();
+  }
+  draw();lastWall=performance.now();
+  requestAnimationFrame(frame);
+}
+setInterval(function(){if(performance.now()-lastWall>120)frame(performance.now());},100);
+
+/* ── boot ── */
+buildGrid();loadLevel(0);running=false;
+document.getElementById('menu').classList.remove('hide');
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
