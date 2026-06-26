@@ -144,23 +144,22 @@ var LEVELS=[];
           break;
         }
         case 'gap':{
-          /* Proper jump gap with a crest + brief post-crest dip.
-             The post-crest point makes Catmull-Rom tangent at the crest
-             point UPWARD, so the spline launches the car rather than
-             curving it into the pit.
-             Gap width starts smaller at L6 and grows with level.        */
-          var gw=40+L*5;   /* 70 at L6 → 135 at L19, gentler ramp-up   */
-          x+=180;           /* long flat runway to build speed            */
-          pts.push([x,      base]);      /* runway end / ramp foot        */
-          pts.push([x+45,   base-55]);   /* ramp slope                    */
-          pts.push([x+80,   base-80]);   /* crest (launch point)          */
-          pts.push([x+105,  base-50]);   /* post-crest dip — forces       */
-                                         /* Catmull tangent UP at crest   */
-          pts.push([x+107,  base+700]);  /* near-vertical near wall       */
-          pts.push([x+107+gw, base+700]);/* pit floor                     */
-          pts.push([x+109+gw, base-50]); /* near-vertical far wall        */
-          pts.push([x+140+gw, base]);    /* landing slope                 */
-          x+=gw+200;
+          /* Jump gap: GENTLE ramp (~15° grade) so the car can drive up,
+             with a post-crest dip so Catmull-Rom tangent at the crest
+             points slightly upward for a real launch.
+             Previous ramp (55px rise/45px run = 51°) was unclimbable. */
+          var gw=40+L*4;   /* 64px at L6 → 116px at L19               */
+          x+=120;           /* extra flat run-up to build speed          */
+          pts.push([x,      base]);      /* ramp foot                     */
+          pts.push([x+85,   base-22]);   /* lower ramp (0.26 grad, 14°)   */
+          pts.push([x+155,  base-40]);   /* crest                         */
+          pts.push([x+195,  base-28]);   /* post-crest dip — tangent at   */
+                                         /* crest becomes slightly upward  */
+          pts.push([x+197,  base+700]);  /* near-vertical near wall        */
+          pts.push([x+197+gw, base+700]);/* pit floor                     */
+          pts.push([x+199+gw, base-28]); /* near-vertical far wall        */
+          pts.push([x+250+gw, base]);    /* landing slope                 */
+          x+=gw+270;
           break;
         }
         case 'plateau':{
