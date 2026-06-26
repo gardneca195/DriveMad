@@ -205,7 +205,8 @@ var SURFACES={
     /* cycle through the recipe's feature pool */
     for(var f=0;f<rec.numF;f++){
       var type=rec.feats[f%rec.feats.length];
-      x+=100+r()*120;
+      /* gaps need extra run-up for speed; other features less */
+      x+=(type==='gap'?220:100)+r()*120;
 
       switch(type){
         case 'hill':{
@@ -238,19 +239,28 @@ var SURFACES={
           break;
         }
         case 'gap':{
-          var gw=25+diff*55;
-          x+=160+diff*40;
-          pts.push([x,      base]);
-          pts.push([x+120,  base-20]);
-          pts.push([x+180,  base-28]);
-          pts.push([x+220,  base-28]);
-          pts.push([x+250,  base-28]);
-          pts.push([x+252,  base+700]);
-          pts.push([x+252+gw, base+700]);
-          pts.push([x+254+gw, base-28]);
-          pts.push([x+290+gw, base-28]);
-          pts.push([x+350+gw, base]);
-          x+=gw+380;
+          /* Monster truck jump: steep kicker launches car high.
+             Landing pad is well below launch peak.
+             Cliff walls start 65px out and 150px below the lip
+             so wheels/chassis never collide with them during flight. */
+          var gw=50+diff*65;
+          var peak=80+diff*30;
+          var drop=70+diff*50;
+          var land=base-peak+drop;
+          x+=160;
+          pts.push([x,       base]);           /* flat approach      */
+          pts.push([x+50,    base]);           /* speed zone         */
+          pts.push([x+110,   base-peak*0.4]); /* ramp lower face    */
+          pts.push([x+150,   base-peak]);      /* steep kicker       */
+          pts.push([x+170,   base-peak]);      /* launch lip         */
+          pts.push([x+235,   base+200]);       /* near cliff (65px out, far below) */
+          pts.push([x+237,   base+700]);       /* pit wall           */
+          pts.push([x+237+gw,base+700]);       /* pit floor          */
+          pts.push([x+239+gw,base+200]);       /* far cliff          */
+          pts.push([x+304+gw,land]);           /* landing pad start (65px in) */
+          pts.push([x+360+gw,land]);           /* landing pad end    */
+          pts.push([x+430+gw,base]);           /* downslope to base  */
+          x+=gw+460;
           break;
         }
         case 'plateau':{
@@ -473,14 +483,14 @@ function step(dt){
            : input.gas  ? lerp(0.88,0.88*surfFR,0.6)
            :              0.9995;
   /* surface also scales drive force: slippery = less traction */
-  var driveF=11*clamp(surfFR,0.7,1.15);
+  var driveF=19*clamp(surfFR,0.82,1.10);
 
   for(var s=0;s<sub;s++){
-    /* integrate — tiny air-drag damps out-of-control speeds gently */
+    /* integrate — lighter air-drag allows higher top speed for jumps */
     for(var i=0;i<pts.length;i++){
       var p=pts[i],vx=p.x-p.px,vy=p.y-p.py;
       p.px=p.x;p.py=p.y;
-      p.x+=vx*0.9998;p.y+=vy*0.9998+GRAV*sdt*sdt;
+      p.x+=vx*0.9999;p.y+=vy*0.9999+GRAV*sdt*sdt;
     }
     /* drive force: push wheel position; sticks pull the chassis */
     var dir=input.gas?1:(input.brake?-1:0);
@@ -879,6 +889,23 @@ setInterval(function(){if(performance.now()-lastWall>120)frame(performance.now()
 buildGrid();loadLevel(0);running=false;
 document.getElementById('menu').classList.remove('hide');
 requestAnimationFrame(frame);
+
+/* expose internals for automated testing */
+window._g = function(k,v){
+  var refs={level:function(){return level;},ended:function(){return ended;},
+    running:function(){return running;},progress:function(){return progress;},
+    elapsed:function(){return elapsed;},tries:function(){return tries;}};
+  if(k==='gas'){input.gas=v;return;}
+  if(k==='brake'){input.brake=v;return;}
+  if(k==='setRunning'){running=v;return;}
+  if(k==='setEnded'){ended=v;return;}
+  if(k==='setTries'){tries=v;return;}
+  if(refs[k])return refs[k]();
+};
+window._gLoad=loadLevel;
+window._gLevels=LEVELS;
+window._gHud=hud;
+window._gRetry=retry;
 })();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
