@@ -3,8 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<meta http-equiv="Cache-Control" content="no-store">
-<title>Drive Mad — Claude Games (2D)</title>
+<meta name="theme-color" content="#11151f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Drive Mad</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
   html,body{height:100%;overflow:hidden;}
@@ -107,7 +112,7 @@ var SURFACES={
   mud:      {fill:'#6b4423',stroke:'#4a2e12',sky:'#a09080',fr:0.72, name:'Mud'},
   blacktop: {fill:'#3a3a3a',stroke:'#222',   sky:'#6ca6d9',fr:1.12, name:'Blacktop'},
   concrete: {fill:'#9a9a8a',stroke:'#787868',sky:'#88bbdd',fr:1.05, name:'Concrete'},
-  snow:     {fill:'#e8eef5',stroke:'#b8c8d8',sky:'#c0d8ee',fr:0.65, name:'Snow'}
+  snow:     {fill:'#e8eef5',stroke:'#b8c8d8',sky:'#c0d8ee',fr:0.82, name:'Snow'}
 };
 
 (function(){
@@ -875,6 +880,7 @@ buildGrid();loadLevel(0);running=false;
 document.getElementById('menu').classList.remove('hide');
 requestAnimationFrame(frame);
 })();
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
 </body>
 </html>
