@@ -158,45 +158,47 @@ var SURFACES={
   R(['plateau','gap','valley','ramp'],'mud',6);
 
   /* ── Tier 6: Combinations ramp up (26-30) ── */
-  R(['valley','gap','plateau','hill'],'blacktop',6);
-  R(['gap','valley','ramp','hill'],  'mud',6);
-  R(['ramp','gap','valley','plateau'],'snow',6);
-  R(['gap','plateau','valley'],      'concrete',6);
-  R(['hill','valley','gap','ramp','plateau'],'grass',7);
+  R(['valley','gap','hill','ramp'],  'blacktop',5);
+  R(['hill','valley','ramp','gap'],  'mud',5);
+  R(['ramp','gap','valley','hill'],  'snow',5);
+  R(['gap','plateau','valley'],      'concrete',5);
+  R(['hill','valley','gap','ramp'],  'grass',6);
 
   /* ── Tier 7: Serious challenge (31-35) ── */
-  R(['valley','gap','ramp'],         'mud',7);
-  R(['gap','gap','valley'],          'snow',6);
-  R(['plateau','gap','valley','ramp'],'blacktop',7);
-  R(['gap','valley','gap'],          'mud',6);
-  R(['ramp','plateau','gap','valley'],'snow',7);
+  R(['valley','gap','ramp','hill'],  'mud',6);
+  R(['ramp','hill','gap','valley'],  'snow',6);
+  R(['plateau','gap','valley','ramp'],'blacktop',6);
+  R(['hill','gap','valley','ramp'],  'mud',6);
+  R(['ramp','valley','gap','hill'],  'snow',6);
 
   /* ── Tier 8: Expert (36-40) ── */
-  R(['gap','valley','gap','ramp'],   'mud',7);
-  R(['valley','gap','plateau','gap'],'snow',7);
-  R(['gap','ramp','gap','valley'],   'concrete',8);
-  R(['plateau','valley','gap','gap'],'mud',7);
-  R(['gap','valley','ramp','gap','plateau'],'snow',8);
+  R(['gap','valley','ramp','hill'],  'mud',6);
+  R(['valley','gap','hill','plateau'],'snow',6);
+  R(['gap','ramp','valley','hill'],  'concrete',7);
+  R(['plateau','valley','gap','ramp'],'mud',6);
+  R(['hill','gap','valley','ramp','plateau'],'snow',7);
 
   /* ── Tier 9: Master (41-45) ── */
-  R(['gap','gap','valley','ramp'],   'mud',8);
-  R(['valley','gap','gap','plateau'],'snow',8);
-  R(['gap','valley','gap','ramp','gap'],'blacktop',8);
-  R(['plateau','gap','valley','gap'],'mud',8);
-  R(['gap','gap','valley','gap'],    'snow',8);
+  R(['gap','hill','valley','ramp'],  'mud',7);
+  R(['valley','gap','ramp','plateau'],'snow',7);
+  R(['ramp','gap','valley','gap','hill'],'blacktop',7);
+  R(['plateau','gap','valley','ramp'],'mud',7);
+  R(['hill','gap','valley','gap'],   'snow',7);
 
   /* ── Tier 10: Insanity (46-50) ── */
-  R(['gap','valley','gap','gap'],    'mud',9);
-  R(['gap','gap','valley','gap','ramp'],'snow',9);
-  R(['valley','gap','gap','plateau','gap'],'mud',9);
-  R(['gap','gap','gap','valley'],    'snow',9);
-  R(['gap','valley','gap','gap','plateau','gap'],'mud',10);
+  R(['gap','valley','hill','gap','ramp'],'mud',7);
+  R(['ramp','gap','valley','gap','hill'],'snow',7);
+  R(['valley','gap','ramp','plateau','gap'],'mud',8);
+  R(['gap','hill','gap','valley','ramp'],'snow',8);
+  R(['hill','gap','valley','gap','ramp','plateau'],'mud',8);
 
   for(var L=0;L<RECIPES.length;L++){
     var rec=RECIPES[L];
     var r=rnd(L*131+7);
     var pts=[],x=0,base=BASE_Y;
-    var diff=L/RECIPES.length; /* 0..1 difficulty scalar */
+    var rawDiff=L/RECIPES.length;
+    var sFRrec=(SURFACES[rec.surface]||SURFACES.grass).fr;
+    var diff=rawDiff*clamp(sFRrec,0.75,1.0);
 
     /* flat start */
     pts.push([-200,base]);pts.push([0,base]);pts.push([200,base]);
@@ -206,7 +208,8 @@ var SURFACES={
     for(var f=0;f<rec.numF;f++){
       var type=rec.feats[f%rec.feats.length];
       /* gaps need extra run-up for speed; other features less */
-      x+=(type==='gap'?220:100)+r()*120;
+      var sFR=(SURFACES[rec.surface]||SURFACES.grass).fr;
+      x+=(type==='gap'?Math.round(180/sFR):100)+r()*120;
 
       switch(type){
         case 'hill':{
@@ -239,13 +242,10 @@ var SURFACES={
           break;
         }
         case 'gap':{
-          /* Monster truck jump: steep kicker launches car high.
-             Landing pad is well below launch peak.
-             Cliff walls start 65px out and 150px below the lip
-             so wheels/chassis never collide with them during flight. */
-          var gw=50+diff*65;
-          var peak=80+diff*30;
-          var drop=70+diff*50;
+          var surfFR=(SURFACES[rec.surface]||SURFACES.grass).fr;
+          var gw=(30+diff*45)*surfFR;
+          var peak=80+diff*25;
+          var drop=70+diff*40;
           var land=base-peak+drop;
           x+=160;
           pts.push([x,       base]);           /* flat approach      */
@@ -499,8 +499,18 @@ function step(dt){
         if(wheels[w].onGround){wheels[w].x+=driveF*dir*sdt*10;wheels[w].spin+=dir*0.4;}
       }
     } else {
-      /* cosmetic spin-down when coasting */
       for(var w2=0;w2<wheels.length;w2++) wheels[w2].spin*=0.98;
+    }
+    /* airborne self-righting: nudge car toward level when no wheels touch */
+    if(!wheels[0].onGround&&!wheels[1].onGround){
+      var ang2=carAngle();
+      var fix=clamp(-ang2*0.003,-0.15,0.15)*sdt*10;
+      var cx=(chassis[0].x+chassis[1].x+chassis[2].x+chassis[3].x)/4;
+      var cy=(chassis[0].y+chassis[1].y+chassis[2].y+chassis[3].y)/4;
+      for(var cr=0;cr<chassis.length;cr++){
+        var dx2=chassis[cr].x-cx,dy2=chassis[cr].y-cy;
+        chassis[cr].x+=(-dy2)*fix;chassis[cr].y+=(dx2)*fix;
+      }
     }
     for(var it=0;it<4;it++) for(var k=0;k<sticks.length;k++) sticks[k].solve();
     /* collisions */
@@ -513,7 +523,7 @@ function step(dt){
       for(var sg2=0;sg2<segs.length;sg2++) collide(chassis[ci],segs[sg2],5,0.80);
     /* driver head — crash on touch */
     for(var sg3=0;sg3<segs.length;sg3++)
-      if(collide(head,segs[sg3],8,0.75)&&running&&!ended) crash('Ouch — driver hit the ground!');
+      if(collide(head,segs[sg3],5,0.75)&&running&&!ended) crash('Ouch — driver hit the ground!');
   }
 
   /* skid marks: record trail when throttle/brake applied on ground */
@@ -873,8 +883,8 @@ function frame(now){
   if(running&&!ended){
     step(dt);elapsed=(performance.now()-t0)/1000;
     var c=carCenter(),ang=Math.abs(carAngle());
-    if(ang>2.75){flipT+=dt;}else{flipT=0;}
-    if(flipT>0.5) crash('Flipped over!');
+    if(ang>2.9){flipT+=dt;}else{flipT=0;}
+    if(flipT>0.6) crash('Flipped over!');
     /* fixed y floor — triggers when car falls into a gap (pit floor ≈ y 1100) */
     if(c.y>820) crash('Fell into the pit!');
     if(c.x>flagX-6&&elapsed>1.5) win();
